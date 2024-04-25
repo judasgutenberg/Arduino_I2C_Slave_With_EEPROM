@@ -4,13 +4,14 @@
  * 
  */
 #include "Wire.h"
+#include <EEPROM.h>
 #define I2C_SLAVE_ADDR 20
  
 volatile int receivedValue = 0;
 long lastMasterSignal = 0;
 long millisNow = millis();
 long dataToSend = -1;
-
+char dataToSend[50]; //make it nice and long
 void setup(){
   Wire.begin(I2C_SLAVE_ADDR);
   Wire.onReceive(receieveEvent); 
@@ -32,7 +33,7 @@ void loop(){
 //send a bytes to the I2C master.  
 void requestEvent(){
   //i only worry about longs for this to keep it simple
-  writeWireLong(dataToSend);
+  writeWholeArray(dataToSend);
 }
 
 //a data packet contains this data (with pipes delimitting byte boundaries):  COMMAND|
@@ -65,20 +66,33 @@ void receieveEvent() {
       //Serial.println("got more than a command");
       receivedValues[byteCursor] = receivedByte;
       //Serial.println(receivedByte);
+      if(byteCount > 2) {
+        
+        destination = destinationHigh * 256 + destinationLow;
+        if(command == 1) {
+          EEPROM.update(destination + byteCursor, receivedValue)
+        } else if (command == 2) {
+          
+        }
+      }
       byteCursor++;
     }
+
+    
     byteCount++;
   }
+  
   for(byte otherByteCursor = byteCursor; otherByteCursor>0; otherByteCursor--) {
     receivedValue = receivedValue + receivedValues[otherByteCursor-1] * pow(256, byteCursor-1)  ;
     //Serial.println("qoot: ");
     //Serial.print(byteCursor-1);
     //Serial.print(":");
     //Serial.print(receivedValue);
+
   }
   //Serial.print("Destination: ");
   //Serial.print(destination);
-  destination = destinationHigh * 256 + destinationLow;
+  
   if(command == 1) { //we had an EEPROM write
 
   
@@ -97,7 +111,9 @@ void receieveEvent() {
       pinMode((int)destination, OUTPUT);
       analogWrite((int)destination, receivedValue - 256); //if you want to send analog content, add 256 to it first
   } else if (command == 2) { //we had an EEPROM read
-
+    for(int i=0; i<50; i++){
+      dataToSend[i] = EEPROM.read(destination+i);
+    }
   } else if (command == 6) { //reading a digital pin
     pinMode((int)destination, INPUT);
     dataToSend = (long)digitalRead((int)destination);
@@ -121,5 +137,10 @@ void writeWireLong(long val) {
   buffer[2] = val >> 8;
   buffer[3] = val;
   Wire.write(buffer, 4);
+}
+
+void writeWholeArray(chr * buffer) {
+  byte buffer[50];
+  Wire.write(buffer, 50);
 }
  
