@@ -1,6 +1,7 @@
-/* Gus Mueller, April 2 2024
- * sends data to a small Arduino (I use a Mini Pro at 8MHz) from a
- * NodeMCU or other master over I2C
+/* Gus Mueller, April 25 2024
+ * sends or receive data to a small Arduino (I use a Mini Pro at 8MHz) from a
+ * NodeMCU or other master over I2C. 
+ * Also accesses slave's EEPROM, which is great because I cannot get the pseudoEeprom code to work on my ESP8266
  * 
  */
 #include "Wire.h"
@@ -10,13 +11,16 @@
 volatile int receivedValue = 0;
 long lastMasterSignal = 0;
 long millisNow = millis();
-long dataToSend = -1;
-char dataToSend[50]; //make it nice and long
+bool numericReturn = false;
+byte numberOfCharsToReturn = 0;
+
+char dataToSend[255]; //make it nice and long
+long numericDataToSend = 0;
 void setup(){
   Wire.begin(I2C_SLAVE_ADDR);
   Wire.onReceive(receieveEvent); 
   Wire.onRequest(requestEvent);
-  //Serial.begin(115200);
+  Serial.begin(115200);
   //Serial.println("Starting up Arduino Slave...");
 }
 
@@ -33,10 +37,15 @@ void loop(){
 //send a bytes to the I2C master.  
 void requestEvent(){
   //i only worry about longs for this to keep it simple
-  writeWholeArray(dataToSend);
+  if(numericReturn) {
+
+    writeWireLong(numericDataToSend);
+  } else {
+    writeWholeArray((char *)dataToSend, numberOfCharsToReturn);
+  }
 }
 
-//a data packet contains this data (with pipes delimitting byte boundaries):  COMMAND|
+//a data packet contains this data (with pipes delimitting byte boundaries):  COMMAND|destinationHigh|destinationLow|dataToWrite-OR-number of bytes to read
 void receieveEvent() {
   lastMasterSignal = millisNow;
   //Serial.println("receive event");
@@ -49,6 +58,7 @@ void receieveEvent() {
   byte destinationLow = 0;
   unsigned long destination = 0;
   byte command = 0;
+  byte amountToRead = 0;
   receivedValue = 0;
   while(0 < Wire.available()) // loop through all but the last
   {
@@ -60,7 +70,9 @@ void receieveEvent() {
       destinationHigh = byteRead;
     } else if (byteCount == 2) {
       destinationLow = byteRead;
-      
+    } else if (byteCount == 3 && command == 2) { //we're on byte 3 and it's read command, so we need to know how much data to read
+      numberOfCharsToReturn = byteRead;
+ 
     } else {
       receivedByte = byteRead;
       //Serial.println("got more than a command");
@@ -70,7 +82,7 @@ void receieveEvent() {
         
         destination = destinationHigh * 256 + destinationLow;
         if(command == 1) {
-          EEPROM.update(destination + byteCursor, receivedValue)
+          EEPROM.update(destination + byteCursor, receivedValue);
         } else if (command == 2) {
           
         }
@@ -111,25 +123,23 @@ void receieveEvent() {
       pinMode((int)destination, OUTPUT);
       analogWrite((int)destination, receivedValue - 256); //if you want to send analog content, add 256 to it first
   } else if (command == 2) { //we had an EEPROM read
-    for(int i=0; i<50; i++){
+    numericReturn = false;
+    for(int i=0; i<numberOfCharsToReturn; i++){  //can send as many as 255 bytes at a time
       dataToSend[i] = EEPROM.read(destination+i);
     }
   } else if (command == 6) { //reading a digital pin
     pinMode((int)destination, INPUT);
-    dataToSend = (long)digitalRead((int)destination);
+    numericReturn = true;
+    numericDataToSend = (long)digitalRead((int)destination);
   } else if (command == 8) { //reading an analog value
-      pinMode((int)destination, INPUT);
-      dataToSend = (long)analogRead((int)destination)
-      pinMode((int)destination, INPUT);
-      dataToSend = (long)digitalRead((int)destination);
-    }
+    pinMode((int)destination, INPUT);
+    numericReturn = true;
+    numericDataToSend = (long)digitalRead((int)destination);
+  }
     //Serial.print("; Data sent: ");
     //Serial.print(dataToSend);
-  }
- 
-  //Serial.println();
 }
-
+ 
 void writeWireLong(long val) {
   byte buffer[4];
   buffer[0] = val >> 24;
@@ -139,8 +149,9 @@ void writeWireLong(long val) {
   Wire.write(buffer, 4);
 }
 
-void writeWholeArray(chr * buffer) {
-  byte buffer[50];
-  Wire.write(buffer, 50);
+void writeWholeArray(char * buffer, byte numberOfCharsToReturn) {
+  Wire.write(buffer, numberOfCharsToReturn);
 }
+
+ 
  
